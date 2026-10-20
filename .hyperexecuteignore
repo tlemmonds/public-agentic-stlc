@@ -1,0 +1,26 @@
+.git/
+.github/
+.hyperexecute/
+.testmu/
+screenshots/
+hyperexecute-cli.log
+reports/html/
+reports/junit/
+# Per-scenario HE results from an earlier job must never ride up to the VMs — every VM
+# would echo them back into the merged artefact as if they were fresh (Stage 6b).
+reports/kane_result_*.json
+reports/native_*.xml
+reports/**/kane_result_*.json
+reports/**/native_*.xml
+reports/he_artifacts/
+# Never upload secrets, local caches or local logs to HyperExecute VMs.
+.env
+.env.*
+.venv/
+venv/
+.testmuai/
+.pytest_cache/
+hyperexecute
+hyperexecute.exe
+reports/*.log
+console/

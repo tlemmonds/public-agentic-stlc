@@ -1,0 +1,88 @@
+version: 0.1
+globalTimeout: 180
+testSuiteTimeout: 180
+testSuiteStep: 180
+
+runson: linux
+
+autosplit: true
+# Native (in-VM) Playwright runs open no LambdaTest grid session, and HE marks any
+# scenario without a session as *skipped* regardless of exit code. Take the status
+# from the runner command's exit code instead (run_with_junit.py propagates it).
+scenarioCommandStatusOnly: true
+retryOnFailure: true
+maxRetries: 1
+# 5 parallel VMs. Tests must not share mutable data: if your AUT keeps state
+# per instance (e.g. SQLite on a serverless host), parallel tests can see
+# different data. Drop this to 1, or give each test its own data scope.
+concurrency: 5
+
+# BROWSERS drives pytest parametrize in conftest.py — no HyperExecute matrix needed.
+# Each test function runs once per browser listed here.
+# Android connects to a LambdaTest real device via CDP; the HE VM stays Linux.
+env:
+  LT_USERNAME: ${LT_USERNAME}
+  LT_ACCESS_KEY: ${LT_ACCESS_KEY}
+  GITHUB_RUN_NUMBER: ${GITHUB_RUN_NUMBER}
+  TARGET_URL: ${TARGET_URL}
+  # Desktop Chrome + Firefox. Real Android devices are supported but not in the
+  # matrix: add "android" (Galaxy S26) and/or "pixel" (Pixel 11) here to run
+  # every test on them too (see _ANDROID_DEVICES in tests/playwright/conftest.py).
+  BROWSERS: "chrome,firefox"
+  # Native testmu exports (tests/playwright/native/<sc>/test.py) drive their own browser.
+  TESTMU_HEADLESS: "true"
+  # Kane 0.9 exports assert through testmu.vision_query, which only answers in
+  # smart mode (needs LT credentials). Without it every assertion fails.
+  TESTMU_SMART: "1"
+
+cacheKey: '{{ checksum "requirements.txt" }}'
+cacheDirectories:
+  - .pip_cache
+  - ~/.cache/ms-playwright
+
+pre:
+  - mkdir -p reports
+  - pip install --cache-dir .pip_cache -r requirements.txt
+  # Union of the staged testmu exports' requirements (written by Stage 3a when any scenario is native).
+  - if [ -f tests/playwright/native/requirements.txt ]; then pip install --cache-dir .pip_cache -r tests/playwright/native/requirements.txt; fi
+  - playwright install chromium firefox webkit
+
+runtime:
+  language: python
+  version: "3.11"
+
+testDiscovery:
+  type: raw
+  mode: dynamic
+  command: cat reports/pytest_selection.txt
+
+# Fixed report filenames — ${BROWSER} is NOT a HyperExecute-injected variable.
+# Browser-level results come from conftest.py writing reports/kane_result_SC-*_<browser>.json
+# per test per browser. normalize_artifacts.py reads those as Priority 1 source.
+#
+# ci/run_selected.py dispatches on the selection line:
+#   tests/playwright/test_regression.py::<fn>  → PYTHONPATH=. pytest "<fn>" -v --tb=short -s
+#                                                --html=reports/report.html --junitxml=reports/junit.xml
+#   tests/playwright/native/<sc_id_lower>     → cd into it and run ../run_with_junit.py, which
+#                                                writes reports/native_<SC>.xml + kane_result_<SC>_chrome.json
+testRunnerCommand: python ci/run_selected.py "$test"
+
+mergeArtifacts: true
+uploadArtefacts:
+  - name: TestReports
+    path:
+      - reports/
+
+report: true
+partialReports:
+  type: json
+  location: reports/
+  frameworkName: extent
+
+post:
+  - echo "HyperExecute multi-browser tests complete"
+
+jobLabel:
+  - agentic-stlc
+  - playwright
+  - multi-browser

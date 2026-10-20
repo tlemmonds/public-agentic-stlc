@@ -1,0 +1,186 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Composite Action: agentic-stlc-orchestrate
+# Stages 2–7 — Scenario sync, test generation, HyperExecute, traceability,
+#              confidence analysis, quality gates, GitHub summary
+#
+# Reusable across any repository using the Agentic STLC platform.
+# ─────────────────────────────────────────────────────────────────────────────
+name: "Agentic STLC — Orchestrate (Stages 2-7)"
+description: "Orchestrate scenario sync, test execution, traceability, and reporting"
+
+inputs:
+  lt-username:
+    description: "LambdaTest username"
+    required: true
+  lt-access-key:
+    description: "LambdaTest access key"
+    required: true
+  python-version:
+    description: "Python version"
+    required: false
+    default: "3.11"
+  full-run:
+    description: "Run all scenarios (not just new/updated)"
+    required: false
+    default: "false"
+  target-url:
+    description: "Application URL under test"
+    required: false
+    default: ""
+  he-config:
+    description: "HyperExecute YAML config file path"
+    required: false
+    default: "hyperexecute.yaml"
+  config-file:
+    description: "Path to agentic-stlc.config.yaml"
+    required: false
+    default: "agentic-stlc.config.yaml"
+  artifact-name:
+    description: "Name of the analyzed-requirements artifact from Stage 1"
+    required: false
+    default: "analyzed-requirements"
+  reports-retention-days:
+    description: "Days to retain pipeline-reports artifact"
+    required: false
+    default: "30"
+
+outputs:
+  verdict:
+    description: "Release verdict: GREEN | YELLOW | RED | INVALID (HyperExecute skipped)"
+    value: ${{ steps.verdict.outputs.verdict }}
+  pass-rate:
+    description: "Test pass rate percentage"
+    value: ${{ steps.verdict.outputs.pass_rate }}
+  quality-gates-passed:
+    description: "true if all CRITICAL quality gates passed"
+    value: ${{ steps.quality-gates.outputs.gates_passed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Setup Python"
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: "Cache pip"
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+        restore-keys: pip-${{ runner.os }}-
+
+    - name: "Install Python dependencies"
+      shell: bash
+      run: pip install -r requirements.txt --cache-dir ~/.cache/pip -q
+
+    - name: "Ensure reports directory"
+      shell: bash
+      run: mkdir -p reports
+
+    - name: "Download Stage 1 artifact"
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: requirements
+
+    - name: "Validate Stage 1 artifact"
+      shell: bash
+      run: |
+        python - <<'PYEOF'
+        import json, sys
+        from pathlib import Path
+        p = Path('requirements/analyzed_requirements.json')
+        if not p.exists():
+            print("ERROR: analyzed_requirements.json not found", file=sys.stderr)
+            sys.exit(1)
+        data = json.loads(p.read_text(encoding='utf-8'))
+        assert isinstance(data, list) and len(data) > 0, "Artifact is empty"
+        passed = sum(1 for r in data if r.get('kane_status') == 'passed')
+        print(f"Stage 1 artifact valid: {len(data)} requirements, {passed} passed")
+        PYEOF
+
+    - name: "Download HyperExecute CLI"
+      shell: bash
+      run: |
+        curl -fsSL -O https://downloads.lambdatest.com/hyperexecute/linux/hyperexecute
+        chmod +x hyperexecute
+        if ! file hyperexecute | grep -q "ELF"; then
+          echo "ERROR: HyperExecute binary invalid"
+          exit 1
+        fi
+        ./hyperexecute --version
+
+    - name: "Run Agentic STLC Orchestrator (Stages 2-7)"
+      shell: bash
+      env:
+        LT_USERNAME:        ${{ inputs.lt-username }}
+        LT_ACCESS_KEY:      ${{ inputs.lt-access-key }}
+        TARGET_URL:         ${{ inputs.target-url }}
+        GITHUB_RUN_NUMBER:  ${{ github.run_number }}
+        FULL_RUN:           ${{ inputs.full-run }}
+        AGENTIC_STLC_CONFIG: ${{ inputs.config-file }}
+        RUN_URL:            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      run: python ci/agent.py
+
+    - name: "Generate pipeline metrics"
+      if: always()
+      shell: bash
+      run: python ci/pipeline_metrics.py
+
+    - name: "Read release verdict"
+      id: verdict
+      if: always()
+      shell: bash
+      run: |
+        python - <<'PYEOF'
+        import json, os
+        from pathlib import Path
+        rec = Path('reports/release_recommendation.json')
+        if rec.exists():
+            data = json.loads(rec.read_text())
+            verdict   = data.get('verdict', 'UNKNOWN')
+            pass_rate = data.get('pass_rate', 0)
+        else:
+            verdict, pass_rate = 'UNKNOWN', 0
+        with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+            f.write(f"verdict={verdict}\n")
+            f.write(f"pass_rate={pass_rate}\n")
+        PYEOF
+
+    - name: "Read quality gates result"
+      id: quality-gates
+      if: always()
+      shell: bash
+      run: |
+        python - <<'PYEOF'
+        import json, os
+        from pathlib import Path
+        qg = Path('reports/quality_gates.json')
+        if qg.exists():
+            data = json.loads(qg.read_text())
+            gates_passed = str(data.get('gates_passed', False)).lower()
+        else:
+            gates_passed = 'false'
+        with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+            f.write(f"gates_passed={gates_passed}\n")
+        PYEOF
+
+    - name: "Build execution payload"
+      if: always()
+      shell: bash
+      env:
+        GITHUB_RUN_ID:     ${{ github.run_id }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: python ci/notify_agent.py
+
+    - name: "Upload pipeline reports"
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pipeline-reports
+        path: |
+          reports/
+          scenarios/scenarios.json
+          tests/playwright/test_regression.py
+        retention-days: ${{ inputs.reports-retention-days }}

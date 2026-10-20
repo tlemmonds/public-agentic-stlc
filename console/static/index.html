@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Release Console</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#16191F;--card:#22262E;--card2:#1B1F26;--fg:#F6F3EC;--muted:#B7BDC9;--line:#353B46;
+  --accent:#E8672A;--gate:#6AB7F5;
+  --green:#5FD38D;--green-bg:#173826;--yellow:#F2C55C;--yellow-bg:#3A2F12;--red:#FF8A80;--red-bg:#46201D;
+  --grey:#B7BDC9;--grey-bg:#2C313A;
+  --sans:"DM Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:18px/1.5 var(--sans)}
+button,input,textarea{font:inherit;color:inherit}
+a{color:var(--accent)}
+.mono,.label{font-family:var(--mono)}
+.label{font-size:16px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.shell{display:flex;height:100vh}
+/* sidebar */
+.side{width:300px;flex:none;background:var(--card2);border-right:1px solid var(--line);display:flex;flex-direction:column;transition:width .15s}
+.side.collapsed{width:64px}
+.side.collapsed .hide-c{display:none}
+.side-top{display:flex;align-items:center;gap:10px;padding:16px}
+.brand{font-weight:700;font-size:20px;letter-spacing:.02em}
+.brand b{color:var(--accent)}
+.icon-btn{background:transparent;border:1px solid var(--line);border-radius:10px;width:40px;height:40px;cursor:pointer;display:grid;place-items:center;flex:none}
+.icon-btn:hover{border-color:var(--muted)}
+.side-item{display:flex;gap:10px;align-items:center;width:calc(100% - 24px);margin:2px 12px;padding:10px 12px;border-radius:10px;background:transparent;border:0;cursor:pointer;text-align:left;font-size:17px}
+.side-item:hover,.side-item.on{background:var(--card)}
+.side-item.on{box-shadow:inset 3px 0 0 var(--accent)}
+.side-label{margin:18px 24px 6px}
+.side-scroll{overflow-y:auto;flex:1}
+.side-foot{padding:14px 20px;border-top:1px solid var(--line);font-size:16px;color:var(--muted)}
+/* main */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.verdictbar{display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding:16px 28px;border-bottom:1px solid var(--line);background:var(--card2)}
+.vbig{font:700 40px/1 var(--mono);padding:10px 18px;border-radius:12px;border:2px solid currentColor;display:inline-flex;gap:10px;align-items:center}
+.vmeta{display:flex;gap:28px;flex-wrap:wrap}
+.vmeta .n{font:600 28px/1.1 var(--mono)}
+.vreason{flex-basis:100%;color:var(--muted)}
+.thread{flex:1;overflow-y:auto;padding:24px 28px 8px}
+.thread-in{max-width:1560px;margin:0 auto}
+.msg{margin:0 0 20px;display:flex;gap:14px}
+.msg.user{justify-content:flex-end}
+.bubble{background:var(--accent);color:#16191F;font-weight:500;padding:10px 16px;border-radius:16px 16px 4px 16px;max-width:70%}
+.avatar{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#16191F;display:grid;place-items:center;font:700 16px var(--mono);flex:none}
+.reply{flex:1;min-width:0}
+.reply > p{margin:4px 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:0 0 12px}
+.card h3{margin:0 0 12px;font-size:20px}
+.card.gates{border-color:var(--gate);box-shadow:inset 4px 0 0 var(--gate)}
+.card.gates h3{color:var(--gate)}
+.src{font:16px var(--mono);color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:17px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font:600 16px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.scroll{overflow-x:auto}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font:600 16px var(--mono);white-space:nowrap;background:var(--grey-bg);color:var(--grey)}
+.s-GREEN,.s-PASS,.s-passed,.s-done,.s-HIGH{color:var(--green);background:var(--green-bg)}
+.s-YELLOW,.s-WARN,.s-MEDIUM,.s-running,.s-flaky,.s-CACHED{color:var(--yellow);background:var(--yellow-bg)}
+.s-RED,.s-FAIL,.s-failed,.s-LOW,.s-CRITICAL_GAP,.s-INVALID{color:var(--red);background:var(--red-bg)}
+.vbig.s-GREEN,.vbig.s-YELLOW,.vbig.s-RED,.vbig.s-INVALID{background:transparent}
+.banner{border-left:4px solid var(--red);background:var(--red-bg);padding:10px 14px;border-radius:8px;margin:0 0 10px}
+.banner.cached{border-color:var(--yellow);background:var(--yellow-bg)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kv > div{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kv .n{font:600 26px/1.2 var(--mono)}
+.timeline{display:grid;gap:6px}
+.trow{display:grid;grid-template-columns:110px 1fr 120px 110px;gap:10px;align-items:center;padding:6px 10px;background:var(--card2);border-radius:8px}
+.crit{display:block;color:var(--muted);font:15px/1.4 var(--sans);margin-top:4px;max-width:520px}
+.log{font:15px/1.45 var(--mono);background:#0F1216;border:1px solid var(--line);border-radius:10px;padding:12px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.qa{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer;font-size:16px}
+.qa:hover{border-color:var(--accent)}
+.qa.run{border-color:var(--accent)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.filters button{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:4px 12px;cursor:pointer;font:16px var(--mono)}
+.filters button.on{border-color:var(--accent);color:var(--accent)}
+/* composer */
+.dock{padding:10px 28px 18px;border-top:1px solid var(--line)}
+.dock-in{max-width:1560px;margin:0 auto}
+.composer{display:flex;gap:10px;align-items:flex-end;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:8px 8px 8px 18px}
+.composer:focus-within{border-color:var(--accent)}
+.composer textarea{flex:1;border:0;background:transparent;resize:none;outline:none;padding:9px 0;min-height:26px;max-height:30vh;font-size:18px}
+.send{background:var(--accent);color:#16191F;border:0;border-radius:12px;padding:0 18px;height:44px;font-weight:700;cursor:pointer}
+.send:disabled{opacity:.5;cursor:default}
+.toggle{display:inline-flex;align-items:center;gap:8px;font:16px var(--mono);color:var(--muted);cursor:pointer;user-select:none}
+.toggle input{width:20px;height:20px;accent-color:var(--accent)}
+.hint{color:var(--muted);font-size:16px;margin-top:8px}
+.muted{color:var(--muted)}
+@media (max-width:860px){.side{display:none}.trow{grid-template-columns:80px 1fr 90px}.trow .d{display:none}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side" id="side" aria-label="Console navigation">
+    <div class="side-top">
+      <button class="icon-btn" id="collapse" aria-label="Collapse sidebar" title="Collapse sidebar">☰</button>
+      <div class="brand hide-c">Release <b>Console</b></div>
+    </div>
+    <button class="side-item hide-c" id="newchat">＋ New conversation</button>
+    <div class="side-scroll hide-c">
+      <div class="side-label label">Releases</div>
+      <div id="sources"></div>
+      <div class="side-label label">Runs this session</div>
+      <div id="runs"><div class="side-item muted" style="cursor:default">No runs yet</div></div>
+    </div>
+    <div class="side-foot hide-c" id="foot">Display only · 127.0.0.1</div>
+  </aside>
+  <div class="main">
+    <header class="verdictbar" id="verdictbar" aria-live="polite"></header>
+    <div class="thread" id="thread"><div class="thread-in" id="thread-in"></div></div>
+    <div class="dock"><div class="dock-in">
+      <div class="chips" id="quick"></div>
+      <form class="composer" id="composer">
+        <textarea id="box" rows="1" placeholder="Type a command, e.g. “run demo”, “gates”, “traceability failed”, “show v1.2.0”" aria-label="Command"></textarea>
+        <label class="toggle" title="FULL_RUN=true runs every non-deprecated scenario"><input type="checkbox" id="full"> Full run</label>
+        <button class="send" id="send" type="submit">Send</button>
+      </form>
+      <div class="hint">Fixed commands only. No LLM. Type <span class="mono">help</span> to see them.</div>
+    </div></div>
+  </div>
+</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) n.append(k.nodeType ? k : String(k));
+  return n;
+}
+const dash = (v) => (v === null || v === undefined || v === "" ? "—" : v);
+// A status chip always carries its text; colour only reinforces it.
+const ICON = {GREEN: "●", YELLOW: "▲", RED: "■", INVALID: "⛔", PASS: "✓", FAIL: "✗", WARN: "!", passed: "✓", failed: "✗"};
+function chip(text, cls) {
+  const t = dash(text);
+  return el("span", {class: `chip s-${cls || t}`}, ICON[t] ? `${ICON[t]} ${t}` : t);
+}
+const src = (key) => el("div", {class: "src"}, `source: ${S.files?.[key]?.path || key}`);
+
+let S = {source: null, data: {}, files: {}};   // current artifact set, verbatim from /api/state
+let SOURCES = [], SNAPSHOT_ONLY = false, RUNS = [], LIVE = null;
+
+async function getJSON(url) { const r = await fetch(url, {cache: "no-store"}); return r.json(); }
+
+// ── Verdict header ── release_recommendation.json, run_validity.json, coverage_report.json
+function renderVerdict() {
+  const bar = $("verdictbar"); bar.replaceChildren();
+  const rec = S.data.recommendation, v = S.data.validity || {}, cov = S.data.coverage?.summary || {};
+  if (!rec) { bar.append(el("div", {class: "muted"}, "No release_recommendation.json in this source.")); return; }
+  bar.append(
+    el("div", {}, el("div", {class: "label"}, "Verdict"), el("span", {class: `vbig s-${rec.verdict}`}, `${ICON[rec.verdict] || ""} ${rec.verdict}`)),
+    el("div", {class: "vmeta"},
+      metric("Pass rate", `${dash(rec.pass_rate)}%`),
+      metric("Passed / executed", `${dash(rec.passed)} / ${dash(rec.executed)}`),
+      metric("Requirements covered", `${dash(rec.requirements_covered)} / ${dash(rec.requirements_total)}`),
+      metric("Full coverage", cov.coverage_pct === undefined ? "—" : `${cov.coverage_pct}%`),
+      metric("Source", SOURCE_LABEL())),
+    el("div", {class: "vreason"},
+      rec.cached ? chip("CACHED") : null, " ",
+      v.hyperexecute === "skipped" ? chip("HyperExecute skipped", "FAIL") : null, " ",
+      rec.recommendation || ""));
+}
+function metric(label, value) { return el("div", {}, el("div", {class: "label"}, label), el("div", {class: "n"}, value)); }
+const SOURCE_LABEL = () => (SOURCES.find((s) => s.id === S.source) || {}).label || S.source || "—";
+
+function banners() {
+  const v = S.data.validity, out = [];
+  if (v?.hyperexecute === "skipped") out.push(el("div", {class: "banner"}, `⛔ HyperExecute skipped — not a valid run. ${v.hyperexecute_reason || ""}`));
+  if (v?.kane_mode === "cached") out.push(el("div", {class: "banner cached"}, "🗄️ CACHED — Kane results replayed from cache; no live Kane sessions ran."));
+  if (!v) out.push(el("div", {class: "banner cached"}, "Run validity unknown: run_validity.json is not in this source."));
+  return out;
+}
+
+// ── Cards ────────────────────────────────────────────────────────────────
+function verdictCard() {
+  const rec = S.data.recommendation;
+  if (!rec) return missing("recommendation");
+  const ra = S.data.traceability?.result_analysis || {};
+  return el("div", {class: "card"}, el("h3", {}, "Release verdict"), ...banners(),
+    el("p", {}, chip(rec.verdict), "  ", rec.recommendation || ""),
+    el("div", {class: "kv"},
+      kv("Pass rate", `${dash(rec.pass_rate)}%`, "release_recommendation.pass_rate"),
+      kv("Executed", dash(rec.executed), "release_recommendation.executed"),
+      kv("Passed", dash(rec.passed), "release_recommendation.passed"),
+      kv("Uncovered requirements", dash(rec.requirements_uncovered), "release_recommendation.requirements_uncovered"),
+      kv("Kane AI pass rate", ra.kane_pass_rate === undefined ? "—" : `${ra.kane_pass_rate}%`, "traceability_matrix.result_analysis.kane_pass_rate"),
+      kv("Risk level", dash(ra.risk_level), "traceability_matrix.result_analysis.risk_level")),
+    list("Failing scenarios", rec.failing_scenarios),
+    list("Untested requirements", rec.untested_requirements),
+    list("Key findings", ra.key_findings),
+    src("recommendation"));
+}
+function kv(label, value, field) { return el("div", {title: field}, el("div", {class: "label"}, label), el("div", {class: "n"}, value)); }
+function list(title, items) {
+  if (!items || !items.length) return null;
+  return el("div", {}, el("div", {class: "label", style: "margin-top:12px"}, title), el("ul", {}, items.map((i) => el("li", {}, String(i)))));
+}
+function missing(key) { return el("div", {class: "card"}, el("p", {class: "muted"}, `${S.files?.[key]?.path || key} is not present in this source.`)); }
+
+function deltaCard() {
+  const d = S.data.delta, m = S.data.manifest, api = S.data.api?.he_summary || {}, pl = S.data.payload?.hyperexecute || {};
+  if (!d) return missing("delta");
+  const sum = d.summary || {};
+  const ops = d.operations || [];
+  const jobLink = api.job_link || pl.dashboard || "";
+  return el("div", {class: "card"}, el("h3", {}, `Release delta · ${d.from_release} → ${d.to_release}`),
+    el("p", {}, chip(d.applied ? "APPLIED" : "PROPOSE (no changes)", d.applied ? "done" : "running")),
+    el("div", {class: "kv"},
+      kv("Added", dash(sum.ADD), "release_delta.summary.ADD"),
+      kv("Updated", dash(sum.EDIT), "release_delta.summary.EDIT"),
+      kv("Deprecated", dash(sum.DELETE), "release_delta.summary.DELETE"),
+      kv("Unmatched", dash(sum.UNMATCHED), "release_delta.summary.UNMATCHED"),
+      kv(`Selected (${m?.run_type || "—"})`, m ? m.selected_scenarios.length : "—", "test_execution_manifest.selected_scenarios (count)"),
+      kv("HyperExecute job", jobLink ? el("a", {href: jobLink, target: "_blank", rel: "noopener"}, api.job_id || "open") : "—", "api_details.he_summary.job_link")),
+    ops.length ? el("div", {class: "scroll", style: "margin-top:12px"}, el("table", {},
+      el("thead", {}, el("tr", {}, ["Op", "Req", "Scenarios", "Score", "Item"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, ops.map((o) => el("tr", {},
+        el("td", {}, chip({ADD: "added", EDIT: "updated", DELETE: "deprecated"}[o.op] || o.op, {ADD: "done", EDIT: "running", DELETE: "failed"}[o.op])),
+        el("td", {class: "mono"}, dash(o.requirement_id)),
+        el("td", {class: "mono"}, (o.sc_ids || []).join(", ") || "—"),
+        el("td", {class: "mono"}, o.match_score),
+        el("td", {}, o.item_text)))))) : null,
+    m ? el("p", {class: "muted"}, `Selected: ${m.selected_scenarios.join(", ") || "none"}`) : null,
+    src("delta"));
+}
+
+let traceFilter = "all";
+function traceCard(filter) {
+  if (filter) traceFilter = filter;
+  const t = S.data.traceability;
+  if (!t) return missing("traceability");
+  const conf = Object.fromEntries((S.data.confidence?.records || []).map((r) => [r.requirement_id, r]));
+  const healed = new Set(S.data.healing?.patched_scenarios || []);
+  const reqs = t.requirements || [];
+  const results = [...new Set(reqs.map((r) => r.overall))];
+  const box = el("div", {class: "card"});
+  const draw = () => {
+    const rows = reqs.filter((r) => traceFilter === "all" || r.overall === traceFilter);
+    box.replaceChildren(el("h3", {}, "Traceability"), ...banners(),
+      el("div", {class: "filters"}, ["all", ...results].map((f) => el("button", {class: f === traceFilter ? "on" : "", onclick: () => { traceFilter = f; draw(); }}, f))),
+      el("div", {class: "scroll"}, el("table", {},
+        el("thead", {}, el("tr", {}, ["Requirement", "BRD ref", "Scenarios", "Kane", "Playwright", "Result", "Healed", "Confidence"].map((h) => el("th", {}, h)))),
+        el("tbody", {}, rows.map((r) => {
+          const c = conf[r.requirement_id] || {};
+          const sc = r.scenario_ids || [];
+          return el("tr", {},
+            el("td", {}, el("span", {class: "mono"}, r.requirement_id), el("span", {class: "crit"}, r.acceptance_criterion || "")),
+            el("td", {class: "mono"}, dash((r.brd_ref || "").replaceAll(",", ", "))),
+            el("td", {class: "mono"}, sc.join(", ") || "—"),
+            el("td", {}, chip(r.kane_status)), el("td", {}, chip(r.playwright_status)), el("td", {}, chip(r.overall)),
+            el("td", {}, sc.some((s) => healed.has(s)) ? chip("healed", "running") : "—"),
+            el("td", {}, c.confidence_level ? chip(`${c.confidence_level} · ${c.confidence_score}`, c.confidence_level) : "—"));
+        })))),
+      el("p", {class: "muted"}, `${rows.length} of ${reqs.length} requirements shown.`),
+      el("div", {class: "src"}, `sources: ${S.files.traceability.path} · ${S.files.confidence.path} · ${S.files.healing.path}`));
+  };
+  draw();
+  return box;
+}
+
+function gatesCard() {
+  const g = S.data.gates;
+  if (!g) return missing("gates");
+  return el("div", {class: "card gates"}, el("h3", {}, "Quality gates"),
+    el("p", {}, "Overall: ", chip(g.gates_passed ? "PASS" : "FAIL"), `  ·  ${dash(g.critical_failures)} critical, ${dash(g.warnings)} warnings`),
+    el("div", {class: "scroll"}, el("table", {},
+      el("thead", {}, el("tr", {}, ["Gate", "Severity", "Threshold", "Actual", "Result", "Detail"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, (g.gates || []).map((x) => el("tr", {},
+        el("td", {}, x.gate), el("td", {class: "mono"}, dash(x.severity)),
+        el("td", {class: "mono"}, withUnit(x.threshold, x.unit)),
+        el("td", {class: "mono"}, withUnit(x.actual, x.unit)),
+        el("td", {}, chip(x.passed ? "PASS" : "FAIL")),
+        el("td", {class: "muted"}, x.detail || "")))))),
+    src("gates"));
+}
+
+function withUnit(v, unit) { return unit && unit !== "%" ? `${dash(v)} ${unit}` : `${dash(v)}${unit || ""}`; }
+
+function coverageCard() {
+  const c = S.data.coverage?.summary, k = S.data.confidence?.summary;
+  if (!c && !k) return missing("coverage");
+  const lv = k?.by_confidence_level || {};
+  return el("div", {class: "card"}, el("h3", {}, "Coverage and confidence"),
+    c ? el("div", {class: "kv"},
+      kv("Fully covered", `${dash(c.covered_full)} (${dash(c.coverage_pct)}%)`, "coverage_report.summary.covered_full / coverage_pct"),
+      kv("Partially covered", dash(c.covered_partial), "coverage_report.summary.covered_partial"),
+      kv("Uncovered", dash(c.uncovered), "coverage_report.summary.uncovered"),
+      kv("Negative coverage", `${dash(c.negative_coverage_pct)}%`, "coverage_report.summary.negative_coverage_pct"),
+      kv("HyperExecute coverage", `${dash(c.he_coverage_pct)}%`, "coverage_report.summary.he_coverage_pct"),
+      kv("High-risk requirements", dash(c.high_risk_count), "coverage_report.summary.high_risk_count")) : null,
+    k ? el("div", {style: "margin-top:12px"}, el("div", {class: "label"}, "Confidence levels (scenario-confidence-report.summary.by_confidence_level)"),
+      el("div", {class: "chips"}, Object.entries(lv).map(([n, v]) => chip(`${n}: ${v}`, n))),
+      el("p", {}, "Confidence gate: ", chip(k.quality_signals?.confidence_gate_passed ? "PASS" : "FAIL"))) : null,
+    el("div", {class: "src"}, `sources: ${S.files.coverage.path} · ${S.files.confidence.path}`));
+}
+
+// ── Runs ─────────────────────────────────────────────────────────────────
+function runCard(run) {
+  const box = el("div", {class: "card"});
+  box.dataset.run = run.id;
+  updateRunCard(box, run, []);
+  return box;
+}
+function fmtDur(s) { if (s === null || s === undefined) return "—"; const t = Math.round(s); return t >= 60 ? `${Math.floor(t / 60)}m ${t % 60}s` : `${t}s`; }
+function updateRunCard(box, run, lines) {
+  const now = Date.now() / 1000;
+  box.replaceChildren(...[
+    el("h3", {}, `Run ${run.id} · ${run.mode === "demo" ? "DEMO_MODE (cached)" : "live"} · ${run.full ? "full" : "incremental"}`),
+    el("p", {}, chip(run.status, run.status === "done" ? "done" : run.status === "failed" ? "failed" : "running"),
+      `  elapsed ${fmtDur((run.ended || now) - run.started)}`),
+    el("div", {class: "label"}, "Steps"),
+    el("div", {class: "timeline"}, run.steps.map((s) => el("div", {class: "trow"}, el("span", {}, chip(s.status, s.status === "skipped" ? "" : s.status)), el("span", {}, s.label), el("span", {class: "mono muted"}, s.exit === null ? "" : `exit ${s.exit}`), el("span", {})))),
+    el("div", {class: "label", style: "margin-top:12px"}, "Stage timeline (from the pipeline's stage banners)"),
+    el("div", {class: "timeline"}, run.stages.length ? run.stages.map((s) => el("div", {class: "trow"},
+      el("span", {class: "mono"}, `Stage ${s.num}`), el("span", {}, s.name), el("span", {}, chip(s.status)),
+      el("span", {class: "mono muted d"}, s.started ? fmtDur((s.ended || now) - s.started) : "—"))) : el("div", {class: "muted"}, "waiting for the first stage banner…")),
+    run.status === "failed" ? el("div", {class: "banner", style: "margin-top:12px"}, `Run failed at ${run.failed_stage || "unknown stage"}. Previous results are still shown; the last 40 log lines are below.`) : null,
+    el("details", {open: run.status === "failed" ? true : null}, el("summary", {class: "label", style: "cursor:pointer;margin-top:12px"}, "Log"),
+      el("div", {class: "log"}, (run.status === "failed" ? run.tail : lines.slice(-200)).join("\n")))].filter(Boolean));
+}
+async function startRun(mode) {
+  if (SNAPSHOT_ONLY) return reply("Snapshot mode is read-only, so runs are disabled. Restart without --snapshot to run the pipeline.");
+  const full = $("full").checked;
+  const r = await fetch("/api/run", {method: "POST", headers: {"Content-Type": "application/json", "X-Console": "1"}, body: JSON.stringify({mode, full})});
+  const run = await r.json();
+  if (!r.ok) return reply(`Could not start the run: ${run.error}`);
+  const card = runCard(run);
+  reply(`Starting ${mode === "demo" ? "a DEMO_MODE (cached Kane) run" : "a live run"} · FULL_RUN=${full}. The previous results stay on screen until it finishes.`, card);
+  follow(run, card);
+}
+function follow(run, card) {
+  const lines = [];
+  LIVE = run.id; RUNS.unshift(run); renderRuns();
+  const es = new EventSource("/api/run/stream?from=0");
+  es.addEventListener("line", (e) => lines.push(JSON.parse(e.data)));
+  es.addEventListener("status", (e) => { const s = JSON.parse(e.data); Object.assign(run, s); updateRunCard(card, s, lines); renderRuns(); });
+  es.addEventListener("end", async () => {
+    es.close(); LIVE = null; renderRuns();
+    if (run.status === "done") { await loadSources(); await loadSource("current", true); reply("Run finished. These are the new results from reports/.", verdictCard()); }
+    else reply(`The run failed at ${run.failed_stage || "an unknown stage"}. I kept the previous results.`);
+  });
+  es.onerror = () => {};
+}
+function renderRuns() {
+  const box = $("runs"); box.replaceChildren();
+  if (!RUNS.length) return box.append(el("div", {class: "side-item muted", style: "cursor:default"}, "No runs yet"));
+  for (const r of RUNS) box.append(el("div", {class: "side-item", style: "cursor:default"}, chip(r.status, r.status === "done" ? "done" : r.status === "failed" ? "failed" : "running"), ` ${r.mode} · ${r.id.slice(9)}`));
+}
+
+// ── Thread + commands (deterministic; no LLM) ───────────────────────────
+function say(text) { $("thread-in").append(el("div", {class: "msg user"}, el("div", {class: "bubble"}, text))); scroll(); }
+function reply(text, ...cards) {
+  const m = el("div", {class: "msg"}, el("div", {class: "avatar"}, "RC"), el("div", {class: "reply"}, text ? el("p", {}, text) : null, ...cards));
+  $("thread-in").append(m);
+  m.scrollIntoView({block: "start"});
+}
+function scroll() { const t = $("thread"); t.scrollTop = t.scrollHeight; }
+const HELP = [
+  ["run demo", "run with cached Kane results (DEMO_MODE)"], ["run live", "run against the deployed AUT"],
+  ["verdict", "release verdict and its reasons"], ["delta", "release delta and incremental selection"],
+  ["traceability [failed|passed|…]", "requirement table, optionally filtered by result"],
+  ["gates", "quality gates as the pipeline reports them"], ["coverage", "coverage and confidence"],
+  ["show v1.2.0 · show current · show snapshot", "switch the release you are looking at"], ["log", "last 40 lines of the latest run"],
+];
+async function command(raw) {
+  const text = raw.trim(); if (!text) return;
+  say(text);
+  const t = text.toLowerCase();
+  let m;
+  if (/^(help|\?|commands)$/.test(t)) return reply("These are the commands I understand:", el("div", {class: "card"}, el("table", {}, el("tbody", {}, HELP.map(([c, d]) => el("tr", {}, el("td", {class: "mono"}, c), el("td", {}, d)))))));
+  if (/\brun\b/.test(t) && /(demo|cached)/.test(t)) { if (/\bfull\b/.test(t)) $("full").checked = true; return startRun("demo"); }
+  if (/\brun\b/.test(t) && /\blive\b/.test(t)) { if (/\bfull\b/.test(t)) $("full").checked = true; return startRun("live"); }
+  if ((m = t.match(/^(?:show|load|open)\s+(v\d+(?:\.\d+){0,3}|current|latest|snapshot)$/))) {
+    const id = m[1] === "latest" ? "current" : m[1];
+    if (!SOURCES.some((s) => s.id === id)) return reply(`No reports for “${m[1]}”. Available: ${SOURCES.map((s) => s.id).join(", ") || "none"}.`);
+    await loadSource(id); return reply(`Showing ${SOURCE_LABEL()}.`, verdictCard());
+  }
+  if (/^(verdict|summary|status|recommendation)$/.test(t)) return reply(null, verdictCard());
+  if (/^(delta|release|changes|selection)$/.test(t)) return reply(null, deltaCard());
+  if ((m = t.match(/^(?:trace|traceability|requirements)(?:\s+(\S+))?$/))) return reply(null, traceCard(m[1] || "all"));
+  if (/^(gates?|quality( gates)?)$/.test(t)) return reply(null, gatesCard());
+  if (/^(coverage|confidence)$/.test(t)) return reply(null, coverageCard());
+  if (/^logs?$/.test(t)) {
+    const st = await getJSON("/api/sources");
+    return st.run ? reply(`Last 40 lines of run ${st.run.id} (${st.run.status}):`, el("div", {class: "log"}, st.run.tail.join("\n"))) : reply("No run has been started from this console yet.");
+  }
+  reply("I only understand fixed commands (no LLM). Try one of these:", quickChips());
+}
+function quickChips() {
+  const c = el("div", {class: "chips"});
+  const add = (label, cmd, cls) => c.append(el("button", {class: `qa ${cls || ""}`, type: "button", onclick: () => command(cmd)}, label));
+  if (!SNAPSHOT_ONLY) { add("▶ Run (DEMO_MODE cached)", "run demo", "run"); add("▶ Run (live)", "run live", "run"); }
+  add("Verdict", "verdict"); add("Release delta", "delta"); add("Traceability", "traceability");
+  add("Failed only", "traceability failed"); add("Quality gates", "gates"); add("Coverage", "coverage");
+  return c;
+}
+
+// ── Sources / history ───────────────────────────────────────────────────
+async function loadSources() {
+  const st = await getJSON("/api/sources");
+  SOURCES = st.sources; SNAPSHOT_ONLY = st.snapshot_only;
+  $("foot").textContent = SNAPSHOT_ONLY ? "SNAPSHOT mode · runs disabled · 127.0.0.1" : "Display only · 127.0.0.1";
+  renderSources();
+  $("quick").replaceChildren(...quickChips().childNodes);
+  return st;
+}
+function renderSources() {
+  const box = $("sources"); box.replaceChildren();
+  if (!SOURCES.length) box.append(el("div", {class: "side-item muted", style: "cursor:default"}, "No reports yet"));
+  for (const s of SOURCES) box.append(el("button", {class: `side-item ${s.id === S.source ? "on" : ""}`, onclick: async () => { await loadSource(s.id); reply(`Showing ${s.label}.`, verdictCard()); }}, s.label));
+}
+async function loadSource(id, quiet) {
+  const st = await getJSON(`/api/state?source=${encodeURIComponent(id)}`);
+  if (st.error) { if (!quiet) reply(`Could not load ${id}: ${st.error}`); return; }
+  S = st; renderVerdict(); renderSources();
+}
+
+// ── Boot ────────────────────────────────────────────────────────────────
+$("composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("box").value; $("box").value = ""; command(v); });
+$("box").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("composer").requestSubmit(); } });
+$("collapse").addEventListener("click", () => $("side").classList.toggle("collapsed"));
+$("newchat").addEventListener("click", () => { $("thread-in").replaceChildren(); greet(); });
+function greet() {
+  reply(S.source ? `Hi. You're looking at ${SOURCE_LABEL()}. Everything here is read from the pipeline's own report files.` : "No reports found yet. Start a run, or restart with --snapshot to load demo-fallback/.",
+    S.source ? verdictCard() : null);
+}
+(async () => {
+  const st = await loadSources();
+  if (st.default) await loadSource(st.default, true); else renderVerdict();
+  greet();
+  if (st.run && st.run.status === "running") { const card = runCard(st.run); reply("A run is in progress:", card); follow(st.run, card); }
+})();
+</script>
+</body>
+</html>

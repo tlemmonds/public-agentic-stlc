@@ -1,0 +1,163 @@
+name: Agentic STLC Pipeline
+
+on:
+  push:
+    paths:
+      - "requirements/**"
+      - "scenarios/**"
+      - "tests/**"
+      - "ci/**"
+      - "hyperexecute.yaml"
+      - "agentic-stlc.config.yaml"
+      - ".github/workflows/agentic-stlc.yml"
+      - ".github/actions/**"
+  pull_request:
+    paths:
+      - "requirements/**"
+      - "scenarios/**"
+      - "tests/**"
+      - "ci/**"
+      - "hyperexecute.yaml"
+      - "agentic-stlc.config.yaml"
+  workflow_dispatch:
+    inputs:
+      full_run:
+        description: "Run all active scenarios (not just new/updated)"
+        required: false
+        default: false
+        type: boolean
+      demo_mode:
+        description: "DEMO_MODE: use pre-generated Kane results, skip live Kane calls"
+        required: false
+        default: "false"
+        type: boolean
+      target_url:
+        description: "Override TARGET_URL for this run"
+        required: false
+        default: ""
+        type: string
+      regenerate_tests:
+        description: "FORCE_RE_AUTHOR: re-record every Kane _test.md asset (expensive — only when AUT shape changed)"
+        required: false
+        default: "false"
+        type: boolean
+      apply_release_delta:
+        description: "Stage 0: apply the proposed release-notes operations to scenarios.json + freeze the new release lock (default: preview only)"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  # ── Stage 1: KaneAI Functional Verification ───────────────────────────────
+  # Uses the reusable composite action: .github/actions/analyze
+  analyze:
+    name: "Stage 1 · KaneAI Verification"
+    runs-on: ubuntu-latest
+    outputs:
+      requirements-count: ${{ steps.analyze.outputs.requirements_count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Run KaneAI Analysis"
+        id: analyze
+        env:
+          # Replay-first dispatch: when true, every existing _test.md asset
+          # is re-recorded from scratch. Default = false → replay if hash matches.
+          FORCE_RE_AUTHOR: ${{ inputs.regenerate_tests || 'false' }}
+        uses: ./.github/actions/analyze
+        with:
+          lt-username:     ${{ secrets.LT_USERNAME }}
+          lt-access-key:   ${{ secrets.LT_ACCESS_KEY }}
+          node-version:    ${{ env.NODE_VERSION }}
+          python-version:  ${{ env.PYTHON_VERSION }}
+          demo-mode:       ${{ inputs.demo_mode || 'false' }}
+          kane-project-id: ${{ vars.KANE_PROJECT_ID }}
+          kane-folder-id:  ${{ vars.KANE_FOLDER_ID }}
+
+      - name: "Upload Kane Test.md assets"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kane-test-md-assets
+          path: tests/kane/
+          # output-<stem>/.internal/meta.json links a new asset to its Test
+          # Manager case; upload-artifact skips dot-folders by default.
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: "Upload replay decisions log"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-decisions
+          path: reports/replay_decisions.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ── Stages 2–7: Orchestrator ──────────────────────────────────────────────
+  # Uses the reusable composite action: .github/actions/orchestrate
+  orchestrate:
+    name: "Stages 2–7 · Orchestrator"
+    needs: analyze
+    runs-on: ubuntu-latest
+    outputs:
+      verdict:             ${{ steps.orchestrate.outputs.verdict }}
+      pass-rate:           ${{ steps.orchestrate.outputs.pass_rate }}
+      quality-gates-passed: ${{ steps.orchestrate.outputs.quality_gates_passed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Stage 0 — Apply release notes delta (if requested)"
+        if: ${{ inputs.apply_release_delta == true }}
+        shell: bash
+        run: |
+          echo "Applying release_notes operations to scenarios.json + writing new release lock"
+          python ci/release_diff.py --apply
+
+      - name: "Run Orchestrator"
+        id: orchestrate
+        uses: ./.github/actions/orchestrate
+        with:
+          lt-username:    ${{ secrets.LT_USERNAME }}
+          lt-access-key:  ${{ secrets.LT_ACCESS_KEY }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          full-run:       ${{ inputs.full_run && 'true' || 'false' }}
+          target-url:     ${{ inputs.target_url || '' }}
+          he-config:      "hyperexecute.yaml"
+
+      - name: "Upload release delta + lock files"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-delta
+          path: |
+            reports/release_delta.json
+            reports/release_delta.md
+            release_notes/*.lock.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── Summary ───────────────────────────────────────────────────────────────
+  summary:
+    name: "Pipeline Summary"
+    needs: [analyze, orchestrate]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: "Print final verdict"
+        run: |
+          echo "## Pipeline Complete — ${{ needs.orchestrate.outputs.verdict }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Verdict | **${{ needs.orchestrate.outputs.verdict }}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Pass rate | ${{ needs.orchestrate.outputs.pass-rate }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quality gates | ${{ needs.orchestrate.outputs.quality-gates-passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Requirements analyzed | ${{ needs.analyze.outputs.requirements-count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY

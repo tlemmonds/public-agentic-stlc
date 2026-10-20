@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Agentic STLC — Project Configuration (read by ci/project_config.py)
+# Bring your own application under test: set target_url and write your
+# acceptance criteria in requirements/acceptance_criteria.txt.
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "1.0"
+
+project:
+  name: "agentic-stlc"
+  description: "Agentic STLC — Kane CLI + HyperExecute against your AUT"
+
+# Your application under test (REQUIRED — replace the example). The TARGET_URL
+# env var / workflow input overrides this.
+target_url: "https://example.com/"
+
+requirements:
+  format: "acceptance_criteria"
+  paths:
+    - "requirements/acceptance_criteria.txt"
+  output_path: "requirements/analyzed_requirements.json"
+
+scenarios:
+  path: "scenarios/scenarios.json"
+  # Release notes "Added" items create new SC-xxx scenarios.
+  auto_create: true
+
+kaneai:
+  # Record a Kane _test.md asset when none exists; replay it otherwise.
+  auto_record: true
+  adaptive_heal: true
+  # Retry a failed replay this many times (Stage 1). Covers kane-cli runner
+  # crashes at startup and agent flakes.
+  replay_retries: 1
+  # Record objectives as "On {{start_url}} — …" and pass start_url on every
+  # replay. Useful when the start page differs per run; off by default.
+  start_url_variable: false
+  # Optional data isolation for AUTs that scope data by a URL prefix
+  # (/s/<32-hex>/...): every Kane run and regression test starts in a new,
+  # random prefix. Leave false unless your AUT works this way.
+  fresh_session_per_run: false
+  # Exported checks: treat a "Yes"/"No" vision answer as equal to a recorded
+  # "true"/"false" (testmu SDK compares them as exact strings; see
+  # tests/playwright/native/testmu_compat.py). Only boolean checks are affected.
+  yes_no_compat: true
+  # Exported dropdown steps: Kane CLI 0.9 writes `select_option()` with no value,
+  # so the choice is lost. Take it from the step label ('Select "high" in
+  # "Priority"'). See _repair_select_options in run_with_junit.py.
+  select_option_repair: true
+
+# Feature taxonomy for coverage + criticality (optional — without it every
+# requirement is GENERAL). A requirement is classified by the keyword that
+# appears EARLIEST in its text (ci/project_config.py), so pick keywords from
+# each criterion's defining clause, not its setup steps. Replace the example.
+features:
+  HOME:
+    criticality: HIGH
+    keywords: ["home page"]
+    expected_scenarios:
+      - {type: happy_path, description: "Home page loads with its main heading"}
+
+# Where the HyperExecute regression tests come from.
+#   templates     deterministic Playwright tests (ci/playwright_bodies.py): real
+#                 selectors and expect() checks, no vision AI in pass/fail.
+#   kane_exports  Kane's testmu code exports, run natively through
+#                 tests/playwright/native/run_with_junit.py.
+# Kane verifies every criterion in Stage 1 either way.
+regression:
+  source: templates
+
+framework:
+  type: "playwright"
+  language: "python"
+  test_file: "tests/playwright/test_regression.py"
+
+execution:
+  provider: "hyperexecute"
+  mode: "incremental"
+  concurrency: 5

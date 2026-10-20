@@ -1,0 +1,188 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Composite Action: agentic-stlc-analyze
+# Stage 1 — KaneAI functional verification
+#
+# Reusable across any repository that uses the Agentic STLC platform.
+# Inputs match the workflow_dispatch inputs pattern.
+# ─────────────────────────────────────────────────────────────────────────────
+name: "Agentic STLC — Analyze (Stage 1)"
+description: "Run KaneAI functional verification per acceptance criterion"
+
+inputs:
+  lt-username:
+    description: "LambdaTest username"
+    required: true
+  lt-access-key:
+    description: "LambdaTest access key"
+    required: true
+  node-version:
+    description: "Node.js version for Kane CLI"
+    required: false
+    default: "22"
+  python-version:
+    description: "Python version"
+    required: false
+    default: "3.11"
+  demo-mode:
+    description: "Use pre-generated Kane results, skip live calls"
+    required: false
+    default: "false"
+  config-file:
+    description: "Path to agentic-stlc.config.yaml"
+    required: false
+    default: "agentic-stlc.config.yaml"
+  requirements-paths:
+    description: "Comma-separated requirements file paths"
+    required: false
+    default: "requirements/acceptance_criteria.txt"
+  kane-project-id:
+    description: "KaneAI project ID"
+    required: false
+    default: ""
+  kane-folder-id:
+    description: "KaneAI folder ID"
+    required: false
+    default: ""
+
+outputs:
+  artifact-name:
+    description: "Name of the uploaded artifact containing analyzed requirements"
+    value: "analyzed-requirements"
+  requirements-count:
+    description: "Number of requirements analyzed"
+    value: ${{ steps.validate.outputs.requirements_count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Setup Node.js"
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: "Setup Python"
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: "Cache npm (kane-cli)"
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: npm-kane-${{ runner.os }}-${{ inputs.node-version }}
+        restore-keys: npm-kane-${{ runner.os }}-
+
+    - name: "Cache pip"
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+        restore-keys: pip-${{ runner.os }}-
+
+    - name: "Cache Kane results (by requirements hash)"
+      id: kane-cache
+      # Skip the cache when FORCE_RE_AUTHOR is set so `regenerate_tests: true`
+      # actually re-records instead of replaying the previous run's frozen
+      # output. Without this gate, a single bad run pollutes every subsequent
+      # workflow on the same requirements hash.
+      if: env.FORCE_RE_AUTHOR != 'true'
+      uses: actions/cache@v4
+      with:
+        path: requirements/analyzed_requirements.json
+        # Key on everything that decides Kane's results, not just the
+        # requirement text: the recorded assets, the Stage 1 code and the
+        # config. Keyed on requirements alone, run 2's broken replays
+        # (start_url unresolved) were restored into run 3 after the fix.
+        key: kane-results-${{ hashFiles('requirements/*.txt', 'tests/kane/**/*_test.md', 'ci/*.py', 'agentic-stlc.config.yaml') }}
+
+    - name: "Install Python dependencies"
+      shell: bash
+      run: pip install -r requirements.txt --cache-dir ~/.cache/pip -q
+
+    - name: "Install Kane CLI"
+      if: steps.kane-cache.outputs.cache-hit != 'true' && inputs.demo-mode != 'true'
+      shell: bash
+      run: npm install -g @testmuai/kane-cli@0.9.0
+
+    - name: "Configure Kane CLI"
+      if: steps.kane-cache.outputs.cache-hit != 'true' && inputs.demo-mode != 'true' && inputs.kane-project-id != ''
+      shell: bash
+      run: |
+        kane-cli config project ${{ inputs.kane-project-id }}
+        kane-cli config folder ${{ inputs.kane-folder-id }}
+
+    - name: "Run KaneAI (DEMO_MODE)"
+      if: inputs.demo-mode == 'true'
+      shell: bash
+      run: python ci/analyze_requirements.py --demo-mode
+      env:
+        DEMO_MODE: "true"
+
+    - name: "Validate cached Kane results"
+      if: steps.kane-cache.outputs.cache-hit == 'true' && inputs.demo-mode != 'true'
+      id: validate-cache
+      shell: bash
+      continue-on-error: true
+      run: |
+        python - <<'PYEOF'
+        import json, sys
+        from pathlib import Path
+        p = Path('requirements/analyzed_requirements.json')
+        if not p.exists() or not p.stat().st_size:
+            print("Cached artifact missing or empty — will fall through to live Kane")
+            sys.exit(1)
+        data = json.loads(p.read_text(encoding='utf-8'))
+        passed = sum(1 for r in data if r.get('kane_status') == 'passed')
+        # A cache hit is not a live Kane run: mark it so every report says CACHED.
+        for r in data:
+            r['kane_mode'] = 'cached'
+        p.write_text(json.dumps(data, indent=2) + "\n", encoding='utf-8')
+        print(f"[CACHED] CACHE HIT — reusing Kane results ({len(data)} requirements, {passed} passed); marked kane_mode=cached")
+        PYEOF
+
+    - name: "Run KaneAI (live verification — replay-first dispatch)"
+      if: steps.kane-cache.outputs.cache-hit != 'true' && inputs.demo-mode != 'true'
+      shell: bash
+      env:
+        LT_USERNAME: ${{ inputs.lt-username }}
+        LT_ACCESS_KEY: ${{ inputs.lt-access-key }}
+        GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        # Forwarded from the workflow's `regenerate_tests` input. When true,
+        # ci/replay_policy.py issues `rerecord` for every scenario instead of
+        # `replay`. Default false → cheap, deterministic replays.
+        FORCE_RE_AUTHOR: ${{ env.FORCE_RE_AUTHOR || 'false' }}
+        KANE_PROJECT_ID: ${{ inputs.kane-project-id }}
+        KANE_FOLDER_ID:  ${{ inputs.kane-folder-id }}
+        # 5 parallel Kane replays. On older kane-cli, parallel sessions
+        # collided during the Test Manager upload (2026-05-20: workers=5 →
+        # 0/8 passed), so this was 1. With kane-cli 0.9.0 the v1.2.0 baseline
+        # ran 5 at once with 10/10 passed and no upload errors (2026-10-18).
+        # If uploads start timing out again, set this back to "1".
+        KANE_MAX_WORKERS: "5"
+      run: python ci/analyze_requirements.py
+
+    - name: "Validate Stage 1 output"
+      id: validate
+      shell: bash
+      run: |
+        python - <<'PYEOF'
+        import json, sys, os
+        from pathlib import Path
+        p = Path('requirements/analyzed_requirements.json')
+        if not p.exists():
+            print("ERROR: analyzed_requirements.json not found", file=sys.stderr)
+            sys.exit(1)
+        data = json.loads(p.read_text(encoding='utf-8'))
+        print(f"Stage 1 valid: {len(data)} requirements analyzed")
+        # Set output
+        with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+            f.write(f"requirements_count={len(data)}\n")
+        PYEOF
+
+    - name: "Upload analyzed requirements artifact"
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: analyzed-requirements
+        path: requirements/analyzed_requirements.json
+        retention-days: 30

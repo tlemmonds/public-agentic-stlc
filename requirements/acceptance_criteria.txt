@@ -1,0 +1,19 @@
+Title: Example — replace with your application's feature
+
+How to use this file (everything above "Acceptance Criteria:" is ignored):
+  - Set target_url in agentic-stlc.config.yaml to your application under test.
+  - Write one acceptance criterion per line under "Acceptance Criteria:".
+    Each line becomes AC-001, AC-002, ... in file order.
+  - Phrase each line as steps plus a check Kane can verify in a browser,
+    e.g. Enter "Pay invoice" in the "Title" field and click "Add", then verify ...
+  - An optional leading [REF] token links the line to your own requirement id,
+    e.g. [BR-1.1] or [JIRA-123,JIRA-124].
+  - For each criterion, add a regression body for its SC-xxx in
+    ci/playwright_bodies.py.
+
+As a user
+I want to open the home page
+So that I can see what the site is about
+
+Acceptance Criteria:
+[EX-1] Open the home page and verify the main heading reads "Example Domain"
